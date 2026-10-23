@@ -3,7 +3,7 @@ OfficeVision AI - WebSocket Connection Hub
 ===========================================
 
 Manages real-time WebSocket connections between:
-  1. Edge AI Inference Engine (Telemetry Publisher)
+  1. Edge AI Inference Engine (Telemetry Publisher & Command Receiver)
   2. Web Dashboard Frontends (Telemetry Subscribers)
 """
 
@@ -55,6 +55,23 @@ class WebSocketHub:
 
         for dead in dead_sockets:
             self.dashboard_clients.discard(dead)
+
+    async def send_to_ai_workers(self, message: dict):
+        """Dispatches control commands (e.g. RELOAD_WORKSTATIONS) to connected Edge AI workers."""
+        if not self.ai_workers:
+            return
+
+        payload = json.dumps(message)
+        dead_sockets = set()
+
+        for worker in self.ai_workers:
+            try:
+                await worker.send_text(payload)
+            except Exception:
+                dead_sockets.add(worker)
+
+        for dead in dead_sockets:
+            self.ai_workers.discard(dead)
 
 
 ws_hub = WebSocketHub()

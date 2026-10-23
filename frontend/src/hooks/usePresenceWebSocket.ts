@@ -64,6 +64,10 @@ export function usePresenceWebSocket() {
             if (data.workstations) setWorkstations(data.workstations);
             if (data.recent_events) setEvents(data.recent_events.reverse());
             if (data.health) setHealth(data.health);
+          } else if (data.type === 'WORKSTATIONS_UPDATED') {
+            if (Array.isArray(data.workstations)) {
+              setWorkstations(data.workstations);
+            }
           } else if (data.type === 'TELEMETRY') {
             setFps(data.fps || 0);
             setTrackedPeopleCount(data.tracked_people_count || 0);
@@ -111,34 +115,6 @@ export function usePresenceWebSocket() {
                     current_state: data.new_state,
                     active_track_id: data.track_id,
                     time_in_state_sec: 0,
-                  };
-                }
-                return desk;
-              })
-            );
-          } else if (data.type === 'GESTURE_CONFIRMED') {
-            const gestureEvent: PresenceEvent = {
-              event_type: 'GESTURE_CONFIRMED',
-              workstation_id: data.workstation_id,
-              gesture_type: data.gesture_type,
-              selected_reason: data.selected_reason,
-              confirmed_at: data.confirmed_at,
-              formatted_time: data.confirmed_at,
-              timestamp: data.timestamp || Date.now() / 1000,
-            };
-            setEvents((prev) => [gestureEvent, ...prev.slice(0, 49)]);
-
-            // Immediately reflect confirmed gesture on the workstation card!
-            setWorkstations((prev) =>
-              prev.map((desk) => {
-                if (desk.id === data.workstation_id) {
-                  return {
-                    ...desk,
-                    latest_gesture: {
-                      reason: data.selected_reason || 'Voluntary Break',
-                      confirmed_at: data.confirmed_at || new Date().toLocaleTimeString(),
-                      track_id: data.track_id,
-                    },
                   };
                 }
                 return desk;

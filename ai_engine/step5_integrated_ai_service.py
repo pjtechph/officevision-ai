@@ -7,13 +7,13 @@ Purpose:
      - YOLO26-Pose + ByteTrack Multi-Object Tracking
      - Multi-Workstation Spatial Monitoring (e.g., DESK-01, DESK-02)
      - Posture Classification (Seated vs. Standing)
-     - Intentional Gesture Recognition with Stretch Suppression
      - Anti-Flicker State Machine (Entry Debounce & 3.0s Exit Grace Period)
+     - Dynamic Hot-Reload: Listens to Dashboard commands via WebSocket to instantly
+       update workstation zones without restarting or dropping frames.
   2. Dispatches real-time telemetry and structured events to the FastAPI Backend:
      - WebSocket stream at `ws://127.0.0.1:8000/api/v1/ws/ai-telemetry`
      - Clean decoupled microservice architecture (runs locally or on edge device)
      - Sends live JPEG video frames to the backend for dashboard embedding
-     - Logs confirmed gestures with explicit "GESTURE_CONFIRMED" type and links to workstation.
 """
 
 import os
@@ -34,7 +34,6 @@ from core.spatial_zone import (
     save_workstations_to_config,
 )
 from analysis.posture import PostureClassifier
-from analysis.gesture import GestureDetector
 from analysis.state_machine import WorkstationStateMachine, WorkstationState
 from telemetry.ws_client import EdgeTelemetryClient
 
@@ -58,30 +57,6 @@ def on_mouse_click(event, x, y, flags, param):
     if event == cv2.EVENT_LBUTTONDOWN:
         calibration_state.clicked_points.append((x, y))
         print(f"[CALIBRATION] Point {len(calibration_state.clicked_points)}: ({x}, {y})")
-
-
-
-
-def render_gesture_dialog(frame: np.ndarray, active_confirmation: dict, workstation_id: str, w: int, h: int):
-    dialog_w, dialog_h = 560, 150
-    dx1 = (w - dialog_w) // 2
-    dy1 = 120
-    dx2 = dx1 + dialog_w
-    dy2 = dy1 + dialog_h
-
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (dx1, dy1), (dx2, dy2), (25, 20, 20), -1)
-    cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
-
-    cv2.rectangle(frame, (dx1, dy1), (dx2, dy2), (0, 220, 255), 2)
-    cv2.putText(frame, f"INTENTIONAL HAND-RAISE DETECTED [{workstation_id}]", (dx1 + 20, dy1 + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 220, 255), 2, cv2.LINE_AA)
-    cv2.putText(frame, "Voluntary Status: Press key [1-4] or [x] to dismiss", (dx1 + 20, dy1 + 55), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (200, 200, 200), 1, cv2.LINE_AA)
-
-    cv2.putText(frame, "[1] Restroom", (dx1 + 20, dy1 + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(frame, "[2] Meeting", (dx1 + 180, dy1 + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(frame, "[3] Errand", (dx1 + 330, dy1 + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(frame, "[4] Stretch Break", (dx1 + 20, dy1 + 125), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(frame, "[x] Dismiss/Cancel", (dx1 + 240, dy1 + 125), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (160, 160, 240), 1, cv2.LINE_AA)
 
 
 def render_event_timeline(frame: np.ndarray, events: list, w: int, h: int):
@@ -112,15 +87,43 @@ def render_event_timeline(frame: np.ndarray, events: list, w: int, h: int):
                 tid = f"P#{ev['track_id']}" if ev.get("track_id") else "-"
                 ev_str = f"[{etime}] {wid}->{nstate} ({tid})"
                 color = (0, 255, 120) if "OCCUPIED" in ev.get("new_state", "") else (40, 140, 255)
-            elif etype == "GESTURE_CONFIRMED":
-                reason = ev.get("selected_reason") or ev.get("reason", "Break")
-                ev_str = f"[{etime}] {wid} GESTURE: {reason[:10]}"
-                color = (0, 220, 255)
             else:
                 ev_str = f"[{etime}] {etype[:16]}"
                 color = (200, 200, 200)
 
             cv2.putText(frame, ev_str, (px1 + 8, ey), cv2.FONT_HERSHEY_SIMPLEX, 0.34, color, 1, cv2.LINE_AA)
+
+
+def sync_workstations_from_config(config_file: str, current_machines: dict):
+    """
+    Reloads workstations from config file and preserves state machines for unchanged desks.
+    """
+    updated_workstations = load_workstations_from_config(config_file)
+    if not updated_workstations:
+        updated_workstations = [
+            WorkstationZone("DESK-01", "Workstation 1", [[0.1, 0.2], [0.9, 0.2], [0.9, 0.9], [0.1, 0.9]])
+        ]
+        save_workstations_to_config(updated_workstations, config_file)
+
+    updated_ids = {w.id for w in updated_workstations}
+
+    # Remove state machines for deleted workstations
+    for wid in list(current_machines.keys()):
+        if wid not in updated_ids:
+            del current_machines[wid]
+
+    # Add state machines for new workstations
+    for w in updated_workstations:
+        if w.id not in current_machines:
+            current_machines[w.id] = WorkstationStateMachine(
+                workstation_id=w.id,
+                entry_debounce_frames=8,
+                exit_debounce_seconds=3.0,
+                posture_window_size=10,
+            )
+
+    print(f"[HOT-RELOAD] Synchronized {len(updated_workstations)} Workstation Zone(s): {[w.id for w in updated_workstations]}")
+    return updated_workstations, current_machines
 
 
 def main():
@@ -148,31 +151,11 @@ def main():
 
     # 2. Load Workstation Zones (Supports multiple workstations)
     config_file = "config/workstations.json"
-    workstations = load_workstations_from_config(config_file)
-    if not workstations:
-        print("[WARN] No workstations found. Creating default DESK-01.")
-        workstations = [
-            WorkstationZone("DESK-01", "Workstation 1", [[0.1, 0.2], [0.9, 0.2], [0.9, 0.9], [0.1, 0.9]])
-        ]
-        save_workstations_to_config(workstations, config_file)
+    state_machines = {}
+    workstations, state_machines = sync_workstations_from_config(config_file, state_machines)
 
-    print(f"[INFO] Loaded {len(workstations)} Workstation Zone(s): {[w.id for w in workstations]}")
-
-    # 3. Initialize Analyzers & per-workstation FSMs / Gesture Detectors
+    # 3. Initialize Posture Classifier
     posture_classifier = PostureClassifier()
-    state_machines = {
-        w.id: WorkstationStateMachine(
-            workstation_id=w.id,
-            entry_debounce_frames=8,
-            exit_debounce_seconds=3.0,
-            posture_window_size=10,
-        )
-        for w in workstations
-    }
-    gesture_detectors = {
-        w.id: GestureDetector(required_hold_frames=10, cooldown_seconds=8.0)
-        for w in workstations
-    }
 
     # 4. Initialize Edge Telemetry Client (Streams to FastAPI WebSocket Gateway)
     telemetry_client = EdgeTelemetryClient(server_ws_url="ws://127.0.0.1:8000/api/v1/ws/ai-telemetry")
@@ -192,8 +175,8 @@ def main():
     print("\n[INFO] Edge AI Multi-Workstation Service Active:")
     print("  - Video inference runs independently.")
     print("  - Real-time MJPEG frames + Telemetry streamed to FastAPI.")
-    print("  - Press [1-4] when gesture triggers to log break reason.")
-    print("  - Press 'q' to Quit | 'c' to Calibrate\n")
+    print("  - Full Dashboard Control: Hot-reloads workstation zones on the fly.")
+    print("  - Press 'q' to Quit | 'c' to Calibrate locally\n")
 
     prev_time = time.time()
     last_telemetry_broadcast = 0.0
@@ -201,6 +184,15 @@ def main():
 
     try:
         while True:
+            # Check for inbound control commands from the Dashboard via WebSocket
+            cmd = telemetry_client.get_command()
+            if cmd:
+                action = cmd.get("action")
+                if action == "RELOAD_WORKSTATIONS":
+                    workstations, state_machines = sync_workstations_from_config(config_file, state_machines)
+                    if calibration_state.active_desk_idx >= len(workstations):
+                        calibration_state.active_desk_idx = 0
+
             ret, frame = cap.read()
             if not ret or frame is None:
                 time.sleep(0.05)
@@ -213,7 +205,6 @@ def main():
             annotated_frame = results[0].plot(labels=False)
 
             # 7. Map Detected Persons to Workstations
-            # desk_occupants: { desk_id: { "kpts": ..., "bbox": ..., "tid": ..., "anchor": (ax, ay) } }
             desk_occupants = {}
             detected_count = 0
 
@@ -241,7 +232,6 @@ def main():
                     # Check which workstation this person falls into
                     for desk in workstations:
                         if desk.is_point_inside((anchor_x, anchor_y), w, h):
-                            # Assign person to desk (first match)
                             if desk.id not in desk_occupants:
                                 desk_occupants[desk.id] = {
                                     "kpts": person_kpts,
@@ -250,13 +240,11 @@ def main():
                                     "anchor": (anchor_x, anchor_y),
                                 }
 
-            # 8. Update State Machine & Gestures for Each Workstation
-            active_gesture_desk = None
-            primary_gesture_status = None
-
+            # 8. Update State Machine for Each Workstation
             for desk in workstations:
-                sm = state_machines[desk.id]
-                gd = gesture_detectors[desk.id]
+                sm = state_machines.get(desk.id)
+                if not sm:
+                    continue
 
                 if desk.id in desk_occupants:
                     occ = desk_occupants[desk.id]
@@ -266,9 +254,6 @@ def main():
                     ax, ay = occ["anchor"]
 
                     posture, conf, _ = posture_classifier.classify(person_kpts, bbox, h, w)
-                    triggered, g_status = gd.process_frame(person_kpts, person_is_in_desk=True)
-                    if g_status:
-                        primary_gesture_status = g_status
 
                     transition_event = sm.update(
                         is_inside_zone=True,
@@ -280,7 +265,6 @@ def main():
                     cv2.drawMarker(annotated_frame, (int(ax), int(ay)), (0, 255, 255), cv2.MARKER_CROSS, 12, 1)
 
                 else:
-                    _, g_status = gd.process_frame(None, person_is_in_desk=False)
                     transition_event = sm.update(
                         is_inside_zone=False,
                         track_id=None,
@@ -293,10 +277,6 @@ def main():
                         "type": "WORKSTATION_STATE_CHANGE",
                         **transition_event,
                     })
-
-                # Check if this desk triggered a gesture confirmation modal
-                if gd.active_confirmation:
-                    active_gesture_desk = desk.id
 
                 # Render Desk Zone on Frame
                 fsm_status = sm.get_status()
@@ -319,17 +299,18 @@ def main():
             if curr_time - last_telemetry_broadcast >= 0.5:
                 w_states = []
                 for desk in workstations:
-                    st = state_machines[desk.id].get_status()
-                    w_states.append({
-                        "id": desk.id,
-                        "name": desk.name,
-                        "current_state": st["current_state"],
-                        "active_track_id": st["active_track_id"],
-                        "time_in_state_sec": st["time_in_state_sec"],
-                    })
+                    if desk.id in state_machines:
+                        st = state_machines[desk.id].get_status()
+                        w_states.append({
+                            "id": desk.id,
+                            "name": desk.name,
+                            "current_state": st["current_state"],
+                            "active_track_id": st["active_track_id"],
+                            "time_in_state_sec": st["time_in_state_sec"],
+                        })
 
-                has_grace = any(state_machines[d.id].get_status()["is_debouncing_exit"] for d in workstations)
-                max_grace_left = max([state_machines[d.id].get_status()["debounce_sec_left"] for d in workstations] + [0.0])
+                has_grace = any(state_machines[d.id].get_status()["is_debouncing_exit"] for d in workstations if d.id in state_machines)
+                max_grace_left = max([state_machines[d.id].get_status()["debounce_sec_left"] for d in workstations if d.id in state_machines] + [0.0])
 
                 telemetry_client.send_packet({
                     "type": "TELEMETRY",
@@ -363,7 +344,7 @@ def main():
             )
 
             # Center Pill: Multi-Desk Quick Status Summary
-            occ_count = sum(1 for d in workstations if state_machines[d.id].get_status()["current_state"] != WorkstationState.VACANT)
+            occ_count = sum(1 for d in workstations if d.id in state_machines and state_machines[d.id].get_status()["current_state"] != WorkstationState.VACANT)
             summary_text = f"OCCUPANCY: {occ_count}/{len(workstations)} DESKS"
             (tw, th), bl = cv2.getTextSize(summary_text, cv2.FONT_HERSHEY_SIMPLEX, 0.44, 1)
             pill_x = (w - tw) // 2
@@ -375,35 +356,7 @@ def main():
             # 11. Render Timeline (Right side)
             render_event_timeline(annotated_frame, timeline_events, w, h)
 
-            # 12. Render Gesture Progress Bar (Bottom-left)
-            if primary_gesture_status:
-                right_up = primary_gesture_status.get("right_hand_up", False)
-                progress = primary_gesture_status.get("right_progress", 0.0)
-                in_cooldown = primary_gesture_status.get("in_cooldown", False)
-                cooldown_sec = primary_gesture_status.get("cooldown_remaining", 0.0)
-                is_stretching = primary_gesture_status.get("is_stretching", False)
-                action_label = primary_gesture_status.get("action_label", "Gesture: Raise Right Hand Only")
-
-                bar_x1, bar_y1 = 12, h - 45
-                bar_w, bar_h = 240, 14
-                bar_x2 = bar_x1 + bar_w
-                bar_y2 = bar_y1 + bar_h
-
-                cv2.rectangle(annotated_frame, (bar_x1 - 4, bar_y1 - 18), (bar_x2 + 4, bar_y2 + 4), (18, 18, 18), -1)
-
-                if in_cooldown:
-                    cv2.putText(annotated_frame, f"Cooldown: {cooldown_sec}s", (bar_x1, bar_y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (140, 140, 255), 1, cv2.LINE_AA)
-                    cv2.rectangle(annotated_frame, (bar_x1, bar_y1), (bar_x2, bar_y2), (50, 50, 50), 1)
-                else:
-                    lbl_color = (0, 165, 255) if is_stretching else ((0, 255, 255) if right_up else (160, 160, 160))
-                    cv2.putText(annotated_frame, action_label, (bar_x1, bar_y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.38, lbl_color, 1, cv2.LINE_AA)
-
-                    fill_w = int(bar_w * progress)
-                    cv2.rectangle(annotated_frame, (bar_x1, bar_y1), (bar_x2, bar_y2), (50, 50, 50), 1)
-                    if fill_w > 0 and not is_stretching:
-                        cv2.rectangle(annotated_frame, (bar_x1, bar_y1), (bar_x1 + fill_w, bar_y2), (0, 230, 255), -1)
-
-            # 13. Bottom-Right Shortcut Hints
+            # 12. Bottom-Right Shortcut Hints
             cv2.putText(
                 annotated_frame,
                 "Press 'q' to Quit | 'c' to Calibrate",
@@ -415,18 +368,8 @@ def main():
                 cv2.LINE_AA,
             )
 
-            # 14. Render Gesture Voluntary Confirmation Modal
-            if active_gesture_desk:
-                render_gesture_dialog(
-                    annotated_frame,
-                    gesture_detectors[active_gesture_desk].active_confirmation,
-                    active_gesture_desk,
-                    w,
-                    h,
-                )
-
-            # 15. Calibration Overlay (if active)
-            if calibration_state.is_calibrating:
+            # 13. Calibration Overlay (if active)
+            if calibration_state.is_calibrating and len(workstations) > 0:
                 active_wid = workstations[calibration_state.active_desk_idx % len(workstations)].id
                 cv2.rectangle(annotated_frame, (0, 38), (w, 68), (40, 20, 160), -1)
                 cv2.putText(
@@ -442,12 +385,12 @@ def main():
                 for pt in calibration_state.clicked_points:
                     cv2.circle(annotated_frame, pt, 5, (0, 0, 255), -1)
 
-            # 16. Send Live Frame to Backend for Web Streaming
+            # 14. Send Live Frame to Backend for Web Streaming
             ret_enc, jpeg_buf = cv2.imencode(".jpg", annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
             if ret_enc:
                 telemetry_client.send_frame(jpeg_buf.tobytes())
 
-            # 17. Display Local Frame
+            # 15. Display Local Frame
             cv2.imshow(window_name, annotated_frame)
 
             # Keyboard Shortcuts
@@ -455,45 +398,29 @@ def main():
             if key == ord("q") or key == 27:
                 print("\n[INFO] Exit signal received.")
                 break
-            elif key in [ord("1"), ord("2"), ord("3"), ord("4")]:
-                key_char = chr(key)
-                target_desk_id = active_gesture_desk or workstations[0].id
-                gd = gesture_detectors.get(target_desk_id)
-                if gd:
-                    ev = gd.select_reason(key_char)
-                    if ev:
-                        gesture_event_dict = {
-                            "type": "GESTURE_CONFIRMED",
-                            "event_type": "GESTURE_CONFIRMED",
-                            "workstation_id": target_desk_id,
-                            "gesture_type": ev["gesture"],
-                            "selected_reason": ev["selected_reason"],
-                            "confirmed_at": ev["confirmed_at"],
-                            "timestamp": time.time(),
-                        }
-                        timeline_events.append(gesture_event_dict)
-                        # Dispatch immediately to FastAPI WebSocket Gateway!
-                        telemetry_client.send_packet(gesture_event_dict)
-                        print(f"[GESTURE] Confirmed voluntary break for {target_desk_id}: {ev['selected_reason']}")
-            elif key == ord("x"):
-                if active_gesture_desk:
-                    gesture_detectors[active_gesture_desk].cancel_confirmation()
             elif key == ord("c"):
                 calibration_state.is_calibrating = not calibration_state.is_calibrating
                 calibration_state.reset()
             elif key == 9:  # Tab key switches calibrating desk
-                calibration_state.active_desk_idx = (calibration_state.active_desk_idx + 1) % len(workstations)
-                calibration_state.reset()
-                print(f"[CALIBRATION] Switched to {workstations[calibration_state.active_desk_idx].id}")
+                if len(workstations) > 0:
+                    calibration_state.active_desk_idx = (calibration_state.active_desk_idx + 1) % len(workstations)
+                    calibration_state.reset()
+                    print(f"[CALIBRATION] Switched to {workstations[calibration_state.active_desk_idx].id}")
             elif key == ord("r"):
                 calibration_state.reset()
             elif key == ord("s"):
-                if len(calibration_state.clicked_points) >= 3:
+                if len(calibration_state.clicked_points) >= 3 and len(workstations) > 0:
                     norm_pts = [[round(px / w, 4), round(py / h, 4)] for px, py in calibration_state.clicked_points]
                     cur_desk = workstations[calibration_state.active_desk_idx % len(workstations)]
                     cur_desk.polygon_normalized = norm_pts
                     save_workstations_to_config(workstations, config_file)
                     print(f"[CALIBRATION] Saved polygon for {cur_desk.id} to {config_file}!")
+                    # Notify FastAPI backend and connected dashboards
+                    telemetry_client.send_packet({
+                        "type": "WORKSTATIONS_CALIBRATED",
+                        "workstation_id": cur_desk.id,
+                        "polygon_normalized": norm_pts,
+                    })
                     calibration_state.is_calibrating = False
                     calibration_state.reset()
 

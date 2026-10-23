@@ -9,6 +9,7 @@ import {
   Sun,
   Moon,
   ShieldCheck,
+  Sliders,
 } from 'lucide-react';
 import type { SystemHealth } from '../types';
 
@@ -35,6 +36,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const tabs = [
     { id: 'floorplan', label: 'Floorplan & Camera', icon: LayoutGrid },
+    { id: 'workstations', label: 'Workstation & AI Control', icon: Sliders },
     { id: 'polygon_editor', label: 'Polygon Editor', icon: PenTool },
     { id: 'timeline', label: 'Event Timeline', icon: Clock },
   ];
@@ -59,7 +61,7 @@ export const Header: React.FC<HeaderProps> = ({
                   YOLO26-Pose
                 </span>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Workspace Presence & Voluntary Analytics</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Workspace Presence & Edge AI Monitoring</p>
             </div>
           </div>
 

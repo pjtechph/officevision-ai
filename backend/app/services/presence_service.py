@@ -53,12 +53,42 @@ class PresenceService:
                     "current_state": "VACANT",
                     "active_track_id": None,
                     "time_in_state_sec": 0.0,
-                    "latest_gesture": None,
                     "last_updated": datetime.utcnow().strftime("%H:%M:%S"),
                 }
             print(f"[SERVICE] Loaded {len(self.workstations)} workstation(s) from {self.config_path}")
         else:
             print(f"[WARN] Workstations config file {self.config_path} not found.")
+
+    def reload_workstations(self):
+        """Reloads workstations from disk, updating polygons and metadata while preserving runtime state."""
+        if not self.config_path.exists():
+            return
+        with open(self.config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        updated_ids = set()
+        for item in data.get("workstations", []):
+            wid = item["id"]
+            updated_ids.add(wid)
+            if wid in self.workstations:
+                self.workstations[wid]["name"] = item.get("name", wid)
+                self.workstations[wid]["description"] = item.get("description", "")
+                self.workstations[wid]["polygon_normalized"] = item.get("polygon_normalized", [])
+            else:
+                self.workstations[wid] = {
+                    "id": wid,
+                    "name": item.get("name", wid),
+                    "description": item.get("description", ""),
+                    "polygon_normalized": item.get("polygon_normalized", []),
+                    "current_state": "VACANT",
+                    "active_track_id": None,
+                    "time_in_state_sec": 0.0,
+                    "last_updated": datetime.utcnow().strftime("%H:%M:%S"),
+                }
+        for wid in list(self.workstations.keys()):
+            if wid not in updated_ids:
+                del self.workstations[wid]
+        print(f"[SERVICE] Reloaded {len(self.workstations)} workstation(s) from {self.config_path}")
 
     def _persist_workstations(self):
         """Saves current workstations dictionary to JSON config on disk."""
@@ -68,7 +98,7 @@ class PresenceService:
                 {
                     "id": w["id"],
                     "name": w["name"],
-                    "description": w["description"],
+                    "description": w.get("description", ""),
                     "polygon_normalized": w["polygon_normalized"],
                 }
                 for w in self.workstations.values()
@@ -89,7 +119,7 @@ class PresenceService:
                 self.workstations[wid]["last_updated"] = datetime.utcnow().strftime("%H:%M:%S")
 
     def record_event(self, event_data: dict):
-        """Appends a verified state change or gesture event to the timeline."""
+        """Appends a verified state change event to the timeline."""
         event_entry = {
             "id": len(self.event_timeline) + 1,
             **event_data,
@@ -98,16 +128,6 @@ class PresenceService:
         self.event_timeline.append(event_entry)
         if len(self.event_timeline) > 200:
             self.event_timeline.pop(0)
-
-        # If it's a gesture event, link it directly to the corresponding workstation!
-        wid = event_data.get("workstation_id")
-        if wid and wid in self.workstations:
-            if event_data.get("event_type") == "GESTURE_CONFIRMED" or event_data.get("type") == "GESTURE_CONFIRMED":
-                self.workstations[wid]["latest_gesture"] = {
-                    "reason": event_data.get("selected_reason", "Voluntary Break"),
-                    "confirmed_at": event_data.get("confirmed_at", datetime.utcnow().strftime("%H:%M:%S")),
-                }
-                print(f"[SERVICE] Linked gesture to {wid}: {self.workstations[wid]['latest_gesture']}")
 
         return event_entry
 
@@ -134,6 +154,28 @@ class PresenceService:
         print(f"[SERVICE] Updated polygon for {workstation_id} saved to {self.config_path}")
         return True
 
+    def update_workstation(
+        self,
+        wid: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        polygon_normalized: Optional[List[List[float]]] = None,
+    ):
+        """Updates workstation name, description, and/or polygon coordinates."""
+        if wid not in self.workstations:
+            return None
+
+        if name is not None:
+            self.workstations[wid]["name"] = name
+        if description is not None:
+            self.workstations[wid]["description"] = description
+        if polygon_normalized is not None:
+            self.workstations[wid]["polygon_normalized"] = polygon_normalized
+
+        self._persist_workstations()
+        print(f"[SERVICE] Updated workstation {wid}")
+        return self.workstations[wid]
+
     def add_workstation(self, wid: str, name: str, polygon_normalized: List[List[float]], description: str = ""):
         """Adds a new workstation zone and saves to disk."""
         self.workstations[wid] = {
@@ -144,7 +186,6 @@ class PresenceService:
             "current_state": "VACANT",
             "active_track_id": None,
             "time_in_state_sec": 0.0,
-            "latest_gesture": None,
             "last_updated": datetime.utcnow().strftime("%H:%M:%S"),
         }
         self._persist_workstations()

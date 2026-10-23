@@ -19,6 +19,27 @@ class WorkstationZoneSchema(BaseModel):
     last_updated: Optional[str] = None
 
 
+class WorkstationCreateRequest(BaseModel):
+    """Payload to register a new workstation zone."""
+    id: str = Field(..., example="DESK-03")
+    name: str = Field(..., example="Workstation 3")
+    description: Optional[str] = ""
+    polygon_normalized: List[List[float]] = Field(..., description="Polygon points normalized (0.0 - 1.0)")
+
+
+class WorkstationUpdateRequest(BaseModel):
+    """Payload to update an existing workstation."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    polygon_normalized: Optional[List[List[float]]] = None
+
+
+class ServiceControlRequest(BaseModel):
+    """Payload to control the Edge AI inference service process."""
+    action: str = Field(..., example="start", description="'start', 'stop', or 'restart'")
+    camera_source: Optional[str] = Field(None, example="0", description="Webcam index or HTTP/RTSP stream URL")
+
+
 class TelemetryPacket(BaseModel):
     """Periodic real-time status packet sent from Edge AI Vision Engine."""
     camera_id: str = "CAM-01"
@@ -27,7 +48,7 @@ class TelemetryPacket(BaseModel):
     workstation_states: List[Dict[str, Any]]
     active_grace_period: bool = False
     grace_period_remaining: float = 0.0
-    timestamp: float = Field(default_factory=datetime.utcnow().timestamp)
+    timestamp: float = Field(default_factory=lambda: datetime.utcnow().timestamp())
     iso_time: str = Field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
 
 
@@ -42,17 +63,6 @@ class WorkstationEventSchema(BaseModel):
     confidence: float = 0.85
     timestamp: float
     formatted_time: str
-
-
-class GestureEventSchema(BaseModel):
-    """Voluntary employee gesture event."""
-    event_type: str = "GESTURE_CONFIRMED"
-    workstation_id: str
-    gesture_type: str = "RIGHT_HAND_RAISE"
-    selected_reason: str
-    track_id: Optional[int] = None
-    confirmed_at: str
-    timestamp: float = Field(default_factory=datetime.utcnow().timestamp)
 
 
 class EmployeeCheckInRequest(BaseModel):

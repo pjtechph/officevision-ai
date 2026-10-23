@@ -19,7 +19,8 @@ router = APIRouter()
 async def websocket_ai_telemetry(websocket: WebSocket):
     """
     Ingestion endpoint for the Edge AI Vision Engine.
-    Streams binary JPEG video frames, per-frame presence metrics, transitions, and gesture alerts.
+    Streams binary JPEG video frames, per-frame presence metrics, and transitions.
+    Also serves as the control conduit to push commands down to the AI Engine.
     """
     await ws_hub.connect_ai_worker(websocket)
     try:
@@ -41,8 +42,19 @@ async def websocket_ai_telemetry(websocket: WebSocket):
 
                     if packet_type == "TELEMETRY":
                         presence_service.update_telemetry(packet)
-                    elif packet_type in ("WORKSTATION_STATE_CHANGE", "GESTURE_CONFIRMED"):
+                    elif packet_type == "WORKSTATION_STATE_CHANGE":
                         presence_service.record_event(packet)
+                    elif packet_type == "WORKSTATIONS_CALIBRATED":
+                        wid = packet.get("workstation_id")
+                        poly = packet.get("polygon_normalized")
+                        if wid and poly:
+                            presence_service.update_polygon(wid, poly)
+                        else:
+                            presence_service.reload_workstations()
+                        await ws_hub.broadcast_to_dashboards({
+                            "type": "WORKSTATIONS_UPDATED",
+                            "workstations": list(presence_service.workstations.values()),
+                        })
 
                     # Broadcast live state to all active React dashboard clients
                     await ws_hub.broadcast_to_dashboards(packet)

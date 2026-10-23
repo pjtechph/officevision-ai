@@ -6,11 +6,6 @@ export interface Workstation {
   current_state: 'VACANT' | 'OCCUPIED_SEATED' | 'OCCUPIED_STANDING' | 'UNKNOWN';
   active_track_id: number | null;
   time_in_state_sec: number;
-  latest_gesture?: {
-    reason: string;
-    confirmed_at: string;
-    track_id?: number;
-  } | null;
   last_updated: string;
 }
 
@@ -25,9 +20,16 @@ export interface PresenceEvent {
   confidence?: number;
   timestamp: number;
   formatted_time: string;
-  gesture_type?: string;
-  selected_reason?: string;
-  confirmed_at?: string;
+}
+
+export interface ServiceStatus {
+  running: boolean;
+  pid: number | null;
+  camera_source: string;
+  uptime_seconds?: number;
+  ai_vision_connected: boolean;
+  camera_status: string;
+  seconds_since_last_heartbeat: number | null;
 }
 
 export interface SystemHealth {
@@ -39,6 +41,12 @@ export interface SystemHealth {
   total_desks_registered: number;
   total_events_recorded: number;
   total_check_ins: number;
+  process_status?: {
+    running: boolean;
+    pid: number | null;
+    camera_source: string;
+    uptime_seconds?: number;
+  };
 }
 
 export interface AttendanceRecord {

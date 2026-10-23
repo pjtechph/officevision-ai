@@ -1,17 +1,19 @@
 import React, { useState } from 'react';
-import { User, Armchair, Clock, ShieldAlert, Video, Hand, Eye, EyeOff } from 'lucide-react';
+import { User, Armchair, Clock, ShieldAlert, Video, Eye, EyeOff, Settings } from 'lucide-react';
 import type { Workstation } from '../types';
 
 interface FloorplanViewProps {
   workstations: Workstation[];
   activeGracePeriod: boolean;
   gracePeriodRemaining: number;
+  onNavigateToManager?: () => void;
 }
 
 export const FloorplanView: React.FC<FloorplanViewProps> = ({
   workstations,
   activeGracePeriod,
   gracePeriodRemaining,
+  onNavigateToManager,
 }) => {
   const [showCameraStream, setShowCameraStream] = useState(true);
   const occupiedCount = workstations.filter((w) => w.current_state.includes('OCCUPIED')).length;
@@ -33,9 +35,20 @@ export const FloorplanView: React.FC<FloorplanViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Monitored Desks</span>
             <Armchair className="h-5 w-5 text-slate-400" />
           </div>
-          <div className="mt-2 flex items-baseline">
-            <span className="text-3xl font-extrabold text-slate-900 dark:text-white">{workstations.length}</span>
-            <span className="ml-2 text-xs text-slate-500">Active Zones</span>
+          <div className="mt-2 flex items-baseline justify-between">
+            <div>
+              <span className="text-3xl font-extrabold text-slate-900 dark:text-white">{workstations.length}</span>
+              <span className="ml-2 text-xs text-slate-500">Active Zones</span>
+            </div>
+            {onNavigateToManager && (
+              <button
+                onClick={onNavigateToManager}
+                className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline flex items-center space-x-1"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                <span>Manage</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -226,19 +239,6 @@ export const FloorplanView: React.FC<FloorplanViewProps> = ({
                   </span>
                 </div>
               </div>
-
-              {/* Voluntary Gesture Status Badge */}
-              {desk.latest_gesture && (
-                <div className="mt-4 p-3 rounded-xl bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-200 dark:border-cyan-800/80 flex items-center justify-between text-xs">
-                  <span className="flex items-center space-x-1.5 text-cyan-800 dark:text-cyan-300 font-semibold">
-                    <Hand className="h-4 w-4 text-cyan-500 flex-shrink-0" />
-                    <span>Voluntary Activity:</span>
-                  </span>
-                  <span className="font-bold text-cyan-700 dark:text-cyan-200">
-                    {desk.latest_gesture.reason} ({desk.latest_gesture.confirmed_at})
-                  </span>
-                </div>
-              )}
 
               {/* Mini SVG Floorplan Polygon Schematic */}
               <div className="mt-5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 flex items-center justify-center">
