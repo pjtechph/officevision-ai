@@ -16,11 +16,15 @@ Controls:
   - Press 'q' while focused on the video window to safely exit.
 """
 
+import os
 import sys
 import time
+import argparse
 import cv2
 import numpy as np
 from ultralytics import YOLO
+
+from core.camera import open_camera_stream, open_webcam, normalize_camera_source
 
 # The 17 COCO keypoint names and indices used by Ultralytics Pose models
 COCO_KEYPOINTS = [
@@ -44,49 +48,6 @@ COCO_KEYPOINTS = [
 ]
 
 
-def open_webcam(camera_index=0):
-    """
-    Attempts to open the webcam using multiple backends.
-    On Windows 10/11, CAP_MSMF (Media Foundation) is the preferred native backend.
-    Checks frame validity and brightness to ensure we don't get stuck with a black frame.
-    """
-    backends = [
-        (cv2.CAP_MSMF, "Media Foundation (CAP_MSMF)"),
-        (cv2.CAP_DSHOW, "DirectShow (CAP_DSHOW)"),
-        (cv2.CAP_ANY, "Default Backend (CAP_ANY)"),
-    ]
-
-    for backend_id, backend_name in backends:
-        print(f"[INFO] Trying to open camera {camera_index} with {backend_name}...")
-        cap = cv2.VideoCapture(camera_index, backend_id)
-        if not cap.isOpened():
-            print(f"[WARN] Could not open camera with {backend_name}.")
-            continue
-
-        # Warm up camera sensor by reading a few initial frames (allows auto-exposure to stabilize)
-        valid = False
-        for _ in range(5):
-            ret, test_frame = cap.read()
-            if ret and test_frame is not None:
-                brightness = float(np.mean(test_frame))
-                # If brightness is > 1.0, sensor is receiving actual light (not stuck on black)
-                if brightness > 1.0:
-                    valid = True
-                    break
-            time.sleep(0.05)
-
-        if valid:
-            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            print(f"[SUCCESS] Connected via {backend_name}! Native resolution: {w}x{h}")
-            return cap
-        else:
-            print(f"[WARN] {backend_name} opened but returned black frames. Trying next backend...")
-            cap.release()
-
-    # If all fail, return a standard open attempt as final fallback
-    print("[WARN] All verified checks failed. Attempting standard open as fallback...")
-    return cv2.VideoCapture(camera_index)
 
 
 def print_keypoint_summary(keypoints_data):
@@ -114,6 +75,15 @@ def print_keypoint_summary(keypoints_data):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="OfficeVision AI - Step 1: Real-Time YOLO-Pose Verification")
+    parser.add_argument(
+        "--source",
+        "-s",
+        default=os.environ.get("CAMERA_SOURCE", 0),
+        help="Camera source: integer index (0, 1) or stream URL (e.g. http://192.168.100.2:8080/video)",
+    )
+    args = parser.parse_args()
+
     print("=" * 65)
     print(" OfficeVision AI - Step 1: Real-Time YOLO-Pose Verification")
     print("=" * 65)
@@ -127,15 +97,16 @@ def main():
         print(f"[ERROR] Failed to load model '{model_name}': {e}")
         sys.exit(1)
 
-    # 2. Open the camera stream with robust backend negotiation
-    camera_index = 0
-    cap = open_webcam(camera_index)
+    # 2. Open the camera stream
+    camera_source = args.source
+    cap = open_camera_stream(camera_source)
 
-    if not cap.isOpened():
-        print(f"[CRITICAL ERROR] Cannot open camera index {camera_index}.")
+    if cap is None or not cap.isOpened():
+        print(f"[CRITICAL ERROR] Cannot open camera source '{camera_source}'.")
         print("Troubleshooting tips:")
-        print("  1. Ensure no other application (Zoom, Teams, Camera app) is using the webcam.")
-        print("  2. Verify Windows Camera Privacy Settings allow desktop apps to access the camera.")
+        print("  1. If using an IP Camera, ensure your phone/device is on the same Wi-Fi network.")
+        print("  2. Verify the stream URL endpoint (e.g. http://<IP>:8080/video).")
+        print("  3. Ensure no other application has locked the camera.")
         sys.exit(1)
 
     print("\n[INFO] Controls: Click the video window and press 'q' to quit.\n")

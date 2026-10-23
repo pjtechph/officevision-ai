@@ -22,11 +22,11 @@ def test_spatial_zone():
     pts = zone.get_pixel_polygon(w, h)
     assert pts.shape[0] == len(zone.polygon_normalized), "Vertex count mismatch"
 
-    # Test center point (should be inside)
-    center_point = (w / 2.0, h / 2.0)
-    inside = zone.is_point_inside(center_point, w, h)
-    assert inside is True, f"Center point {center_point} should be inside workstation polygon"
-    print(f"[TEST] Center point {center_point} correctly evaluated as INSIDE (True)")
+    # Test center point inside DESK-01 zone (x in [0.05, 0.48], y in [0.25, 0.95])
+    test_point = (w * 0.25, h * 0.5)
+    inside = zone.is_point_inside(test_point, w, h)
+    assert inside is True, f"Point {test_point} should be inside workstation polygon"
+    print(f"[TEST] Interior point {test_point} correctly evaluated as INSIDE (True)")
 
     # Test extreme corner point (0, 0) (should be outside)
     corner_point = (10, 10)

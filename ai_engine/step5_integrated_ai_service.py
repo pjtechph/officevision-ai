@@ -16,14 +16,17 @@ Purpose:
      - Logs confirmed gestures with explicit "GESTURE_CONFIRMED" type and links to workstation.
 """
 
+import os
 import sys
 import time
+import argparse
 from pathlib import Path
 import cv2
 import numpy as np
 from ultralytics import YOLO
 
 # Core & Analysis Modules
+from core.camera import open_camera_stream, open_webcam, normalize_camera_source
 from core.spatial_zone import (
     WorkstationZone,
     calculate_body_anchor,
@@ -57,37 +60,6 @@ def on_mouse_click(event, x, y, flags, param):
         print(f"[CALIBRATION] Point {len(calibration_state.clicked_points)}: ({x}, {y})")
 
 
-def open_webcam(camera_index=0):
-    backends = [
-        (cv2.CAP_MSMF, "Media Foundation (CAP_MSMF)"),
-        (cv2.CAP_DSHOW, "DirectShow (CAP_DSHOW)"),
-        (cv2.CAP_ANY, "Default Backend (CAP_ANY)"),
-    ]
-
-    for backend_id, backend_name in backends:
-        print(f"[INFO] Trying camera {camera_index} with {backend_name}...")
-        cap = cv2.VideoCapture(camera_index, backend_id)
-        if not cap.isOpened():
-            continue
-
-        valid = False
-        for _ in range(5):
-            ret, test_frame = cap.read()
-            if ret and test_frame is not None:
-                if float(np.mean(test_frame)) > 1.0:
-                    valid = True
-                    break
-            time.sleep(0.05)
-
-        if valid:
-            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            print(f"[SUCCESS] Connected via {backend_name}! Resolution: {w}x{h}")
-            return cap
-        else:
-            cap.release()
-
-    return cv2.VideoCapture(camera_index)
 
 
 def render_gesture_dialog(frame: np.ndarray, active_confirmation: dict, workstation_id: str, w: int, h: int):
@@ -152,6 +124,15 @@ def render_event_timeline(frame: np.ndarray, events: list, w: int, h: int):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="OfficeVision AI - Step 5: Multi-Workstation Edge AI Inference Service")
+    parser.add_argument(
+        "--source",
+        "-s",
+        default=os.environ.get("CAMERA_SOURCE", 0),
+        help="Camera source: integer index (0, 1) or stream URL (e.g. http://192.168.100.2:8080/video)",
+    )
+    args = parser.parse_args()
+
     print("=" * 75)
     print(" OfficeVision AI - Step 5: Multi-Workstation Edge AI Inference Service")
     print("=" * 75)
@@ -198,9 +179,9 @@ def main():
     telemetry_client.start()
 
     # 5. Open Camera Stream
-    cap = open_webcam(0)
-    if not cap.isOpened():
-        print("[CRITICAL] Could not open webcam.")
+    cap = open_camera_stream(args.source)
+    if cap is None or not cap.isOpened():
+        print(f"[CRITICAL] Could not open camera source '{args.source}'.")
         telemetry_client.stop()
         sys.exit(1)
 
