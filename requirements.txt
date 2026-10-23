@@ -1,0 +1,35 @@
+# OfficeVision AI — Core Python Dependencies
+# AI Vision & Inference Engine
+
+# Computer Vision library for camera streaming, image processing, and drawing UI overlays
+opencv-python>=4.8.0
+
+# Ultralytics framework for YOLO models (detection, pose estimation, and tracking)
+ultralytics>=8.1.0
+
+# PyTorch deep learning framework (CPU/GPU tensor computation)
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Numerical arrays and mathematical operations for geometry calculations
+numpy>=1.24.0
+
+# Linear Assignment Problem solver used by ByteTrack multi-object tracker
+lap>=0.5.12
+
+# ============================================================
+# Backend & Real-Time Communication
+# ============================================================
+
+# High-performance web framework for REST API and WebSocket streaming
+fastapi>=0.110.0
+
+# Production-grade ASGI server for running FastAPI asynchronously
+uvicorn[standard]>=0.28.0
+
+# Data validation and settings management using Python type hints
+pydantic>=2.6.0
+
+# WebSocket client and server library for real-time edge telemetry
+websockets>=12.0
+

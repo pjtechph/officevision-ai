@@ -1,0 +1,51 @@
+{
+  "camera_id": "CAM-01",
+  "workstations": [
+    {
+      "id": "DESK-01",
+      "name": "Workstation 1 (Left)",
+      "description": "Left desk zone",
+      "polygon_normalized": [
+        [
+          0.05,
+          0.25
+        ],
+        [
+          0.48,
+          0.25
+        ],
+        [
+          0.48,
+          0.95
+        ],
+        [
+          0.05,
+          0.95
+        ]
+      ]
+    },
+    {
+      "id": "DESK-02",
+      "name": "Workstation 2 (Right)",
+      "description": "Right desk zone",
+      "polygon_normalized": [
+        [
+          0.52,
+          0.25
+        ],
+        [
+          0.95,
+          0.25
+        ],
+        [
+          0.95,
+          0.95
+        ],
+        [
+          0.52,
+          0.95
+        ]
+      ]
+    }
+  ]
+}
